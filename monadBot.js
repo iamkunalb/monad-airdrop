@@ -703,6 +703,198 @@ async function caddyFinance(browser, page) {
   await page.click('[data-testid="w3m-header-close"]');
 }
 
+async function getSepoliaEth(browser, page){
+  await page.goto("https://www.alchemy.com/faucets/ethereum-sepolia");
+  await page.fill("input[placeholder='Enter Your Wallet Address (0x...) or ETH Mainnet ENS Domain']", WALLET_ADDRESS);
+
+  const sK = "6LcoGwYfAAAAACjwEkpB-PeW6X-GkCgETtEm32s1"
+
+
+  const createTaskResponse = await fetch('https://api.capsolver.com/createTask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientKey: api_key,
+      task: {
+        type: 'ReCaptchaV2TaskProxyless',
+        websiteURL: "https://www.alchemy.com/faucets/ethereum-sepolia",
+        websiteKey: sK,
+        minScore: 0.3,
+        pageAction: 'homepage',
+      },
+    }),
+  });
+  const createTaskData = await createTaskResponse.json();
+
+  if (!createTaskData.taskId) {
+    console.error('Failed to create CapSolver task:', createTaskData);
+    return await browser.close();
+  }
+
+  const taskId = createTaskData.taskId;
+  console.log('Created CapSolver task, ID:', taskId);
+
+  // 5. Poll for the solution token
+  let solutionToken = null;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 3000)); // wait 3s between polls
+
+    const resultResponse = await fetch('https://api.capsolver.com/getTaskResult', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientKey: api_key,
+        taskId,
+      }),
+    });
+    const resultData = await resultResponse.json();
+
+    if (resultData.status === 'ready') {
+      solutionToken = resultData.solution.gRecaptchaResponse;
+      console.log('Got reCAPTCHA v3 token:', solutionToken);
+      break;
+    } else if (resultData.status === 'processing') {
+      console.log('CapSolver is still processing...');
+    } else {
+      console.error('Error from CapSolver:', resultData);
+    }
+  }
+
+  if (!solutionToken) {
+    console.error('No solution token received (timeout or error).');
+    return await browser.close();
+  }
+
+  // 6. Inject the token into the page
+  //    You may need to adapt this to the site’s specific flow.
+  //    The most common approach is to set a hidden field named "g-recaptcha-response".
+  await page.evaluate((token) => {
+    let recaptchaField = document.querySelector('textarea[name="g-recaptcha-response"]');
+    if (!recaptchaField) {
+      // create a hidden textarea if the site doesn’t already have one
+      recaptchaField = document.createElement('textarea');
+      recaptchaField.name = 'g-recaptcha-response';
+      recaptchaField.style.display = 'none';
+      document.body.appendChild(recaptchaField);
+    }
+    recaptchaField.value = token;
+  }, solutionToken);
+    
+  await page.click('button:has-text("Send Me ")');
+
+}
+
+async function sepToMonEth(browser, page) {
+  await page.goto("https://testnet.orbiter.finance/en?src_chain=11155111&tgt_chain=421614&src_token=ETH");
+  await page.click('button:has-text("Connect Wallet")');
+  await page.locator('div:has-text("EVM") button:has-text("Connect")').click();
+  
+  await page.click('text=Metamask');
+
+  page.reload();
+
+  await page.locator('div:has-text("EVM") button:has-text("Connect")').click();
+
+  await page.click('text=Metamask');
+
+  console.log("🔓 Handling Metamask popup...");
+  const [metamaskPopup] = await Promise.all([
+      browser.waitForEvent('page'),
+      page.waitForTimeout(3000)
+  ]);
+  // await page.waitForTimeout(5000);
+  await metamaskPopup.bringToFront();
+  // await metamaskPopup.waitForTimeout(3000);
+  // Step 4: Enter Password and Unlock
+  console.log("🔑 Entering password...");
+  // await metamaskPopup.fill('input[type="password"]', "Password1!");
+  await metamaskPopup.fill('#password', "Password1!");
+  
+  await metamaskPopup.click('button:has-text("Unlock")'); // Adjust if necessary
+  console.log("🔑 Clicked unlcock");
+
+
+  await page.fill('input[placeholder="0.01 ~ 10"]', '5')
+  await page.click('label:has-text("Arbitrum Sepolia")');
+  await page.fill('input[placeholder="Search Network"]', 'Monad')
+  await page.click('text="Monad Testnet"');
+  
+  await page.click('text="Bridge"');
+}
+
+
+async function monEthtoMon(browser, page) {
+  await page.goto("https://monad.ambient.finance/explore/pools");
+  await page.click('text="Connect Wallet"');
+
+  
+  await page.click('text=Metamask');
+
+  page.reload();
+
+  await page.click('text="Connect Wallet"');
+
+  await page.click('text=Metamask');
+
+  console.log("🔓 Handling Metamask popup...");
+  const [metamaskPopup] = await Promise.all([
+      browser.waitForEvent('page'),
+      page.waitForTimeout(3000)
+  ]);
+  // await page.waitForTimeout(5000);
+  await metamaskPopup.bringToFront();
+  // await metamaskPopup.waitForTimeout(3000);
+  // Step 4: Enter Password and Unlock
+  console.log("🔑 Entering password...");
+  // await metamaskPopup.fill('input[type="password"]', "Password1!");
+  await metamaskPopup.fill('#password', "Password1!");
+  
+  await metamaskPopup.click('button:has-text("Unlock")'); // Adjust if necessary
+  console.log("🔑 Clicked unlcock");
+
+  const button = page.locator('button:has-text("Monad Testnet")');
+
+  if (await button.count() > 0) {
+    // 4. Click it
+    await button.click();
+    console.log('Clicked the "Monad Testnet" button.');
+  } else {
+    console.log('Button not found.');
+  }
+
+  await metamaskPopup.click('button:has-text("Switch")');
+
+  await page.click('text="ETH/MON"');
+
+  await page.click('button:has-text("MON")');
+  await page.click('#token_select_button_0x836047a99e11F376522B447bffb6e3495Dd0637c');
+  await page.click('button:has-text("Approve ETH")');
+  await page.click('button:has-text("Confirm")');
+  await page.click('button:has-text("Submit Swap")');
+
+  await metamaskPopup.click('button:has-text("Confirm")')
+
+}
+
+async function getTestMon(browser, page) {
+  const tasks = [
+    () => getSepoliaEth(browser, page),
+    () => sepToMonEth(browser, page),
+    () => monEthtoMon(browser, page),
+];
+
+for (const task of tasks) {
+    try {
+        await task();
+        console.log(`✅ Completed ${task.name}`);
+    } catch (error) {
+        console.error(`❌ Error in ${task.name}:`, error.message);
+    }
+    await page.waitForTimeout(2000); // Optional: Add a small delay between tasks
+}
+  
+}
+
 async function main() {
   let browser;
   try {
@@ -740,9 +932,11 @@ async function main() {
     // await beanSwap(browser, page);
     // await bimaVault(browser, page);
     // await caddyFinance(browser, page);
+    
 
     // Run tasks one by one, ensuring each completes before moving to the next
     const tasks = [
+        () => getTestMon(browser, page),
         () => claimMonadTokens(browser, page),
         () => mintLilChogStarsNFT(browser, page),
         () => stakeKintsu(browser, page),
@@ -764,6 +958,7 @@ async function main() {
         }
         await page.waitForTimeout(2000); // Optional: Add a small delay between tasks
     }
+
     console.log("All operations completed!");
   } catch (error) {
     console.error("Error in main function:", error.message);
